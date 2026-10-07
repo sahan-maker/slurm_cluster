@@ -129,7 +129,13 @@ network:
         addresses: [10.20.2.1]
 ```
 save and exit. 
-5. sudo netplan apply
+
+5. 
+> sudo netplan apply 
+>
+and if netplan apply fails. install
+>sudo apt update && sudo apt install openvswitch-switch
+>
 6. Repeat on all nodes. Change ips like, 175,176,177
 7. Do "ip a" and confirm the ip address is static after reboots
 
@@ -235,7 +241,7 @@ sudo mount head:/mnt/shared /mnt/shared
 Make it persistent:
 
 ```text
-# /etc/fstab
+sudo nano /etc/fstab #inside add text
 head:/mnt/shared  /mnt/shared  nfs  defaults,_netdev  0  0
 ```
 
@@ -246,17 +252,6 @@ df -h /mnt/shared
 touch /mnt/shared/test && ls -l /mnt/shared
 ```
 
-### 2.4 Rebuilding NFS from scratch (my script)
-
-<!-- Optional: include your teardown/rebuild script and explain what went wrong that made you need it -->
-
-```bash
-#!/usr/bin/env bash
-# rebuild_nfs.sh
-# TODO: paste your script here
-```
-
----
 
 ## Step 3: Munge Authentication
 
@@ -309,56 +304,52 @@ sudo apt install -y slurmd slurm-client
 
 <!-- Or describe building from source if that's what you did -->
 
-### 4.2 Create `slurm.conf`
+### 4.2 Create `slurm.conf` This is most important
 
 Create on head, then copy the **identical** file to every node (or put it on the NFS share).
 
-```text
-# /etc/slurm/slurm.conf
-ClusterName=mycluster
-SlurmctldHost=head
+Use slurm's configuration file tool located at /usr/share/doc/slurmctld/slurm-wlm-configurator.html . Open the configurator file with your browser.
 
-MpiDefault=none
-ProctrackType=proctrack/linuxproc
-ReturnToService=1
-SlurmctldPidFile=/var/run/slurmctld.pid
-SlurmdPidFile=/var/run/slurmd.pid
-SlurmdSpoolDir=/var/lib/slurm/slurmd
-StateSaveLocation=/var/lib/slurm/slurmctld
-SlurmUser=slurm
-
-SchedulerType=sched/backfill
-SelectType=select/cons_tres
-SelectTypeParameters=CR_Core
-
-# COMPUTE NODES (check with: slurmd -C)
-NodeName=node[0-2] CPUs=4 RealMemory=7900 State=UNKNOWN
-PartitionName=main Nodes=node[0-2] Default=YES MaxTime=INFINITE State=UP
-```
-
-Find the correct hardware values on each node:
+Find the correct hardware values on a worker node using(after sshing into):
 
 ```bash
-slurmd -C
+lscpu
 ```
+
+Configure only following
+
+    ClusterName: <YOUR-CLUSTER-NAME>
+    SlurmctldHost: <CONTROLLER-NODE-NAME>
+    NodeName: <WORKER-NODE-NAME>[1-4] (this would mean that you have four worker nodes called <WORKER-NODE-NAME>1, <WORKER-NODE-NAME>2, <WORKER-NODE-NAME>3, <WORKER-NODE-NAME>4)
+    Enter values for CPUs, Sockets, CoresPerSocket, and ThreadsPerCore according to $ lscpu (run on a worker node computer)
+    ProctrackType: LinuxProc
+
+Press the submit button, text will appear in your browser. Copy this text into a new /etc/slurm/slurm.conf file and save.
 
 ### 4.3 Distribute the config
 
+add whatever node names you have
+
 ```bash
-for n in node0 node1 node2; do
+for n in node0 node1 node2 node3; do
   scp /etc/slurm/slurm.conf "$n":/tmp/slurm.conf
-  ssh "$n" "sudo mv /tmp/slurm.conf /etc/slurm/slurm.conf"
+  ssh -t "$n" "sudo mv /tmp/slurm.conf /etc/slurm/slurm.conf"
 done
 ```
 
 ### 4.4 Create required directories
-
+1. On head
 ```bash
 sudo mkdir -p /var/lib/slurm/slurmctld /var/lib/slurm/slurmd /var/log/slurm
 sudo chown -R slurm:slurm /var/lib/slurm /var/log/slurm
 ```
+2. On head for workers
+```bash
+for n in node0 node1 node2 node3; do
+  ssh -t "$n" "sudo mkdir -p /var/lib/slurm/slurmctld /var/lib/slurm/slurmd /var/log/slurm && sudo chown -R slurm:slurm /var/lib/slurm /var/log/slurm"
+done
+```
 
----
 
 ## Step 5: Start the Services
 
@@ -376,6 +367,8 @@ sudo systemctl enable --now slurmd
 
 Check status:
 
+All number of nodes should be shown as idle
+
 ```bash
 sinfo
 scontrol show nodes
@@ -387,35 +380,100 @@ scontrol show nodes
 
 ### 6.1 Simple command across nodes
 
+N3 for 3 workers, change accordingly
+
 ```bash
 srun -N3 hostname
 ```
 
-### 6.2 Batch job
+### 6.2 Simple job to test
+
+1. Set up the working directory
+```bash
+cd /mnt/shared
+```
+2. Write a Python script that finds primes in a given range (will be called per-node with different ranges)
+```bash
+cat << 'EOF' > prime_worker.py
+import sys
+import time
+
+start_range = int(sys.argv[1])
+end_range = int(sys.argv[2])
+
+t0 = time.time()
+primes = []
+for n in range(start_range, end_range):
+    if n < 2:
+        continue
+    is_prime = True
+    for i in range(2, int(n**0.5) + 1):
+        if n % i == 0:
+            is_prime = False
+            break
+    if is_prime:
+        primes.append(n)
+
+elapsed = time.time() - t0
+print(f"Range [{start_range},{end_range}): found {len(primes)} primes in {elapsed:.2f}s")
+EOF
+```
+3. Write the Slurm batch script that distributes different ranges to each node
 
 ```bash
+cat << 'EOF' > prime_job.sh
 #!/bin/bash
-#SBATCH --job-name=test
-#SBATCH --output=/mnt/shared/test_%j.out
-#SBATCH --nodes=2
-#SBATCH --ntasks=2
+#SBATCH --job-name=prime_find
+#SBATCH --nodes=3
+#SBATCH --ntasks=3
+#SBATCH --ntasks-per-node=1
+#SBATCH --output=/mnt/shared/prime_%j.out
 
-srun hostname
+echo "Job started at $(date)"
+echo "Running on nodes: $SLURM_JOB_NODELIST"
+echo "---"
+
+srun --ntasks=3 bash -c '
+  TASK_ID=$SLURM_PROCID
+  RANGE_START=$((TASK_ID * 1000000))
+  RANGE_END=$((RANGE_START + 1000000))
+  echo "Task $TASK_ID on $(hostname): searching [$RANGE_START, $RANGE_END)"
+  python3 /mnt/shared/prime_worker.py $RANGE_START $RANGE_END
+'
+
+echo "---"
+echo "Job finished at $(date)"
+EOF
 ```
+4. Submit it
+```bash
+sbatch prime_job.sh
+```
+5. Watch it run(might end before you watch)
+```bash
+watch -n 2 squeue
+```
+### 6.3 Check output
 
 ```bash
-sbatch test.sh
-squeue
-cat /mnt/shared/test_*.out
+ls -la /mnt/shared/prime_*.out
+cat /mnt/shared/prime_<jobid>.out
 ```
+You should see something like
 
-### 6.3 Expected output
+Job started at Wed Oct  7 07:43:40 UTC 2026
+Running on nodes: node[0-2]
 
-```text
-<!-- paste your actual sinfo / squeue output here -->
-```
+Task 0 on node0: searching [0, 1000000)
+Task 2 on node2: searching [2000000, 3000000)
+Task 1 on node1: searching [1000000, 2000000)
+Range [0,1000000): found 78498 primes in 5.30s
+Range [1000000,2000000): found 70435 primes in 8.95s
+Range [2000000,3000000): found 67883 primes in 11.52s
 
----
+Job finished at Wed Oct  7 07:43:52 UTC 2026
+
+
 
 ## Troubleshooting
 
@@ -438,44 +496,11 @@ sudo tail -f /var/log/slurm/slurmctld.log
 
 ---
 
-## Lessons Learned
-
-<!-- This is the heart of your guide. Be honest and specific. -->
-
-- **What went wrong:** 
-- **What I'd do differently:** 
-- **What took the longest:** 
-- **Things I wish I knew earlier:** 
-
----
-
-## Next Steps
-
-- [ ] Slurm accounting (`slurmdbd` + MariaDB)
-- [ ] Cgroups for resource limits
-- [ ] GPU / GRES support
-- [ ] Monitoring (Prometheus, Grafana)
-- [ ] Environment modules and MPI
-
----
-
-## References
-
-- [Slurm Documentation](https://slurm.schedmd.com/documentation.html)
-- [Slurm Configuration Tool](https://slurm.schedmd.com/configurator.html)
-- [Munge](https://github.com/dun/munge)
-- <!-- add the tutorials and forum posts that helped you -->
-
----
 
 ## Contributing
 
 Found a mistake or have a better approach? Open an issue or pull request.
 
-## License
 
-<!-- e.g. MIT, or CC BY 4.0 for documentation -->
 
----
-
-*Written by [Your Name](https://github.com/your-username). Last updated: YYYY-MM-DD.*
+*Written by [Sahan Prathibha Wijethunga](https://github.com/sahan-maker). Last updated: 2026-10-7.*
