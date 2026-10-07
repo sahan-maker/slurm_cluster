@@ -8,7 +8,7 @@
 
 1. [Overview](#overview)
 2. [Hardware and Network](#hardware-and-network)
-3. [Prerequisites](#prerequisites)
+3. [Step 0: Prepare network](#step-0-prepare)
 4. [Step 1: Prepare All Nodes](#step-1-prepare-all-nodes)
 5. [Step 2: Shared Storage (NFS)](#step-2-shared-storage-nfs)
 6. [Step 3: Munge Authentication](#step-3-munge-authentication)
@@ -52,19 +52,8 @@
 <!-- Optional: add a network diagram or photo of your setup -->
 <!-- ![Cluster photo](images/cluster.jpg) -->
 
----
 
-## Prerequisites
-
-- [ ] Same OS and version on all machines
-- [ ] Static IPs or DHCP reservations
-- [ ] Hostnames resolvable on every node (`/etc/hosts` or DNS)
-- [ ] Time synchronised (chrony or NTP)
-- [ ] Passwordless SSH from head to all nodes
-- [ ] Passwordless `sudo` on the nodes (optional, but makes admin scripting easier)
-
----
-## Step 0: Prepare All Nodes
+## Step 0: Prepare
 
 ### 0.1 Install Ubuntu Jammy Jellyfish GUI version on head node 
 
@@ -95,7 +84,10 @@ GUI version is pretty easy to setup.
 > password: same on each machine
 6. Connect everything to network switch via ethernet cables
 7. Connect a network cable from wall internet to switch
-### 0.3 On Worker nodes
+### 0.3 On Head node
+Change wired network to manual ip and give an ip address.
+
+### 0.4 On Worker nodes
 
 ```bash
 ip a
@@ -113,42 +105,83 @@ sudo nano /etc/cloud/cloud.cfg.d/99-disable-network-config.cfg
 ```
 Add this content: 
 > network: {config: disabled}
-And save (ctrl+o then ctrl+x to exit)
+>
+And save (ctrl+o to save then ctrl+x to exit)
 
-   
-### 0.4 Run commands on all nodes from head
-
-```bash
-for n in node0 node1 node2; do
-  ssh "$n" "hostname && uptime"
-done
+3. Now edit the netplan file with your actual config
+ ```bash
+sudo nano /etc/netplan/50-cloud-init.yaml
 ```
-
-<!-- Add anything that tripped you up here -->
-
----
+(or whatever the filename is under /etc/netplan/ — use ls /etc/netplan/ to confirm)
+4. Replace the content with, using your own ip address, check network admin to figure out what to use instead of 10.20.52 and at the end add a free ip like 175 :
+```bash
+network:
+  version: 2
+  ethernets:
+    enp0s31f6:
+      dhcp4: no
+      addresses:
+        - 10.20.52.175/24
+      routes:
+        - to: default
+          via: 10.20.52.254
+      nameservers:
+        addresses: [10.20.2.1]
+```
+save and exit. 
+5. sudo netplan apply
+6. Repeat on all nodes. Change ips like, 175,176,177
+7. Do "ip a" and confirm the ip address is static after reboots
 
 ## Step 1: Prepare All Nodes
 
-### 1.1 Set hostnames and `/etc/hosts`
-
+### 1.1 Set up `/etc/hosts`
+1. On head node terminal
 ```bash
-sudo hostnamectl set-hostname head   # change per node
+sudo nano /etc/hosts
 ```
+2. edit following according to your ip setup
 
 ```text
-# /etc/hosts (identical on every node)
-10.x.x.x  head
-10.x.x.x  node0
-10.x.x.x  node1
-10.x.x.x  node2
+127.0.0.1 localhost
+127.0.1.1 head
+
+10.20.52.183 head
+10.20.52.175 node0
+10.20.52.176 node1
+10.20.52.177 node2
+
+```
+save and exit
+3. Install openssh
+```bash
+sudo apt update 
+sudo apt install openssh-server -y
+```
+4. Gotta copy the hosts file to worker nodes
+   
+   use the destination pc ip address
+```bash
+scp /etc/hosts elec_cluster@10.20.52.176:/tmp/hosts
+```
+5. SSH into that machine and then copy hosts from tmp to etc
+```bash
+ssh elec_cluster@10.20.52.176
+sudo cp /tmp/hosts /etc/hosts
+```
+6.Repeat this file copying for all nodes until each have an identical hosts file in their etc. But then edit all those files using nano since first two lines should read 127.0.0.1 localhost and 127.0.1.1 nodename. Nodename is it's own name since 1.1 is home. 
+
+7. Check whether you can now ssh and back into each node using just name. Replace elec_cluster with your on cluster/user name
+```bash
+ssh elec_cluster@node1
+ssh elec_cluster@head
 ```
 
 ### 1.2 Set up passwordless SSH
 
 ```bash
 ssh-keygen -t ed25519
-ssh-copy-id <user>@node0
+ssh-copy-id elec_cluster@node0
 # repeat for each node
 ```
 
