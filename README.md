@@ -2,7 +2,7 @@
 
 > A practical, from-scratch guide to building a small Slurm cluster, including the mistakes I made along the way.
 
-<!-- Short intro: why you built it, what you wanted to achieve. 2-3 sentences. -->
+I built the cluster as a Physics lab computational cluster and learned along the way. Email me at sahanprathibhawije@gmail.com for any problems. 
 
 ## Table of Contents
 
@@ -16,14 +16,12 @@
 8. [Step 5: Start the Services](#step-5-start-the-services)
 9. [Step 6: Test the Cluster](#step-6-test-the-cluster)
 10. [Troubleshooting](#troubleshooting)
-11. [Lessons Learned](#lessons-learned)
-12. [References](#references)
 
 ---
 
 ## Overview
 
-<!-- What is Slurm? One paragraph. What will the reader have at the end? -->
+
 
 **What you'll build:**
 
@@ -49,8 +47,10 @@
 - **Admin user:** `<username>`
 - **Slurm version:** `<version>`
 
-<!-- Optional: add a network diagram or photo of your setup -->
-<!-- ![Cluster photo](images/cluster.jpg) -->
+<img width="4000" height="3000" alt="175271" src="https://github.com/user-attachments/assets/b7927cc9-32a8-4237-b290-b44d02d4fac1" />
+
+
+
 
 
 ## Step 0: Prepare
